@@ -80,6 +80,31 @@ def validate_columns(uploaded_columns: list[str]) -> tuple[dict, list[str], list
     return mapping, warnings, errors
 
 
+def read_csv_auto_encoding(file) -> pd.DataFrame:
+    """Read a CSV trying common encodings so Windows-generated files don't fail."""
+    file_bytes = file.read()
+    encodings = ["utf-8", "utf-8-sig", "cp1252", "latin-1"]
+
+    # Use chardet for a better first guess if available
+    try:
+        import chardet
+        detected = chardet.detect(file_bytes).get("encoding", "")
+        if detected and detected.lower() not in [e.lower() for e in encodings]:
+            encodings.insert(0, detected)
+        elif detected:
+            encodings = [detected] + [e for e in encodings if e.lower() != detected.lower()]
+    except ImportError:
+        pass
+
+    last_err: Exception = RuntimeError("No encodings tried")
+    for enc in encodings:
+        try:
+            return pd.read_csv(io.BytesIO(file_bytes), encoding=enc)
+        except (UnicodeDecodeError, LookupError) as e:
+            last_err = e
+    raise last_err
+
+
 def to_xlsx_bytes(df: pd.DataFrame) -> bytes:
     """Convert a DataFrame to XLSX bytes in memory."""
     buf = io.BytesIO()
@@ -140,7 +165,7 @@ if uploaded_file is not None and not st.session_state.processed:
     # 1. Read & validate
     # ------------------------------------------------------------------
     try:
-        raw_df = pd.read_csv(uploaded_file)
+        raw_df = read_csv_auto_encoding(uploaded_file)
     except Exception as e:
         st.error(f"Failed to read CSV: {e}")
         st.stop()
